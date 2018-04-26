@@ -1,0 +1,1930 @@
+ MANIFEST.in                                        |   2 +-
+ boom.spec                                          |  74 +++-
+ boom/__init__.py                                   | 168 +++++++--
+ boom/bootloader.py                                 |  22 +-
+ boom/command.py                                    | 119 ++++++-
+ boom/config.py                                     | 242 +++++++++++++
+ boom/legacy.py                                     | 374 +++++++++++++++++++++
+ examples/boom.conf                                 |   8 +
+ man/man5/boom.5                                    |  52 +++
+ man/man8/boom.8                                    | 120 ++++++-
+ ...94b7b3c8c95cb7d93f75693d2b25f764d-rhel6.profile |   2 +-
+ tests/command_tests.py                             |  25 +-
+ tests/grub/grub.conf                               | 211 ++++++++++++
+ 13 files changed, 1354 insertions(+), 65 deletions(-)
+
+diff --git a/MANIFEST.in b/MANIFEST.in
+index a56ade8..06a542d 100644
+--- a/MANIFEST.in
++++ b/MANIFEST.in
+@@ -5,4 +5,4 @@ recursive-include doc *
+ recursive-include tests/boom *
+ recursive-include tests/loader *
+ recursive-include examples *
+-recursive-include man/man8 *.8
++recursive-include man/ *
+diff --git a/boom.spec b/boom.spec
+index f65142d..763dc15 100644
+--- a/boom.spec
++++ b/boom.spec
+@@ -1,3 +1,8 @@
++%{!?__python2: %global __python2 /usr/bin/python2}
++%{!?py2_build: %global py2_build %{expand: CFLAGS="%{optflags}" %{__python2} setup.py %{?py_setup_args} build --executable="%{__python2} -s"}}
++%{!?py2_install: %global py2_install %{expand: CFLAGS="%{optflags}" %{__python2} setup.py %{?py_setup_args} install -O1 --skip-build --root %{buildroot}}}
++%{!?python2_sitelib: %global python2_sitelib %{python_sitelib}}
++
+ %if 0%{?rhel}
+ %global py2_pkgname python-boom
+ %else
+@@ -9,7 +14,7 @@
+ 
+ Name: boom
+ Version: 0.8
+-Release: 1%{?dist}
++Release: 5.6%{?dist}
+ Summary: %{summary}
+ 
+ Group: Applications/System
+@@ -20,13 +25,17 @@ Source0: boom-%{version}.tar.gz
+ BuildArch: noarch
+ 
+ BuildRequires: python2-devel
++%if 0%{?rhel}
++BuildRequires: python-sphinx
++%else
++BuildRequires: python2-sphinx
++%endif
+ %if 0%{!?with_python3:1}
+ BuildRequires: python-setuptools
+ %endif
+ 
+ %if 0%{?with_python3}
+ BuildRequires: python2-setuptools
+-#BuildRequires: python2-sphinx
+ BuildRequires: python3-devel
+ BuildRequires: python3-sphinx
+ BuildRequires: python3-setuptools
+@@ -44,6 +53,24 @@ include this support in both Red Hat Enterprise Linux 7 and Fedora).
+ Summary: %{summary}
+ %{?python_provide:%python_provide python2-boom}
+ 
++# RHEL6's Python-2.6 does not include the python-argparse module in
++# the main python-libs pacage, and the dbus package is required to
++# provide a machine_id on this release.
++#
++# Since the machine_id is only automatically generated at boot time
++# (and since the machine may not have been rebooted since the package
++# was installed), ensure the file is present by generating it in the
++# %post script.
++%if 0%{?rhel} == 6
++Requires: python-argparse
++Requires: dbus
++
++%post -n %{?py2_pkgname}
++if [ ! -e /var/lib/dbus/machine-id ]; then
++    dbus-uuidgen > /var/lib/dbus/machine-id
++fi
++%endif
++
+ %description -n %{?py2_pkgname}
+ Boom is a boot manager for Linux systems using boot loaders that support
+ the BootLoader Specification for boot entry configuration.
+@@ -103,21 +130,32 @@ mkdir -p ${RPM_BUILD_ROOT}/boot/boom/profiles
+ mkdir -p ${RPM_BUILD_ROOT}/boot/loader/entries
+ install -d -m 750 ${RPM_BUILD_ROOT}/boot/boom/profiles ${RPM_BUILD_ROOT}
+ install -d -m 750 ${RPM_BUILD_ROOT}/boot/loader/entries ${RPM_BUILD_ROOT}
++install -m 644 examples/profiles/*.profile ${RPM_BUILD_ROOT}/boot/boom/profiles
++install -m 644 examples/boom.conf ${RPM_BUILD_ROOT}/boot/boom
++
++# Automatically enable legacy bootloader support for RHEL6 builds
++%if 0%{?rhel} == 6
++sed -i 's/enable = False/enable = True/' ${RPM_BUILD_ROOT}/boot/boom/boom.conf
++%endif
+ 
+ mkdir -p ${RPM_BUILD_ROOT}/%{_mandir}/man8
++mkdir -p ${RPM_BUILD_ROOT}/%{_mandir}/man5
+ install -m 644 man/man8/boom.8 ${RPM_BUILD_ROOT}/%{_mandir}/man8
++install -m 644 man/man5/boom.5 ${RPM_BUILD_ROOT}/%{_mandir}/man5
+ 
+ %check
+-%{__python2} setup.py test
++# Test suite currently does not operate in rpmbuild environment
++#%{__python2} setup.py test
+ 
+-%if 0%{?with_python3}
+-%{__python3} setup.py test
+-%endif # if with_python3
++#%if 0%{?with_python3}
++#%{__python3} setup.py test
++#%endif # if with_python3
+ 
+ %files -n %{?py2_pkgname}
++%{!?_licensedir:%global license %%doc}
+ %license COPYING
+ %doc README.md
+-%doc %{_mandir}/man8/boom.*
++%doc %{_mandir}/man*/boom.*
+ %if 0%{?sphinx_docs}
+ %doc doc/html/
+ %endif # if sphinx_docs
+@@ -126,13 +164,14 @@ install -m 644 man/man8/boom.8 ${RPM_BUILD_ROOT}/%{_mandir}/man8
+ %{_bindir}/boom
+ /etc/grub.d/42_boom
+ %config(noreplace) /etc/default/boom
++%config(noreplace) /boot/boom/boom.conf
+ /boot/*
+ 
+ %if 0%{?with_python3}
+ %files -n python3-boom
+ %license COPYING
+ %doc README.md
+-%doc %{_mandir}/man8/boom.*
++%doc %{_mandir}/man*/boom.*
+ %if 0%{?sphinx_docs}
+ %doc doc/html/
+ %endif # if sphinx_docs
+@@ -144,6 +183,25 @@ install -m 644 man/man8/boom.8 ${RPM_BUILD_ROOT}/%{_mandir}/man8
+ %endif # if with_python3
+ 
+ %changelog
++* Fri Apr 06 2018 Bryn M. Reeves <bmr@redhat.com> = 0.8-5.6
++- Automatically enable legacy support on RHEL6 builds
++- Add %post snippet to generate machine_id on RHEL6
++- Add additional needed dependencies for RHEL6 builds
++- Print error if machine_id cannot be found
++
++* Tue Mar 27 2018 Bryn M. Reeves <bmr@redhat.com> = 0.8-5.3
++- Include fixes for issue #11 in Copr build
++
++* Fri Mar 16 2018 Bryn M. Reeves <bmr@redhat.com> = 0.8-5.2
++- Add python-2.6 compatibility patch (el6)
++
++* Thu Mar 15 2018 Bryn M. Reeves <bmr@redhat.com> = 0.8-5.1
++- Add built-in profiles to RPM package
++- Bump package release
++
++* Fri Mar 09 2018 Bryn M. Reeves <bmr@redhat.com> = 0.8-5
++- Add boom(5) configuration file man page
++
+ * Tue Oct 31 2017 Bryn M. Reeves <bmr@redhat.com> = 0.8-1
+ - Merge spec file changes from mcsontos
+ - Add boom.8 manual page
+diff --git a/boom/__init__.py b/boom/__init__.py
+index dfcb4a6..595a342 100644
+--- a/boom/__init__.py
++++ b/boom/__init__.py
+@@ -37,14 +37,12 @@ __version__ = "0.8"
+ 
+ #: The location of the system ``/boot`` directory.
+ DEFAULT_BOOT_PATH = "/boot"
+-__boot_root = DEFAULT_BOOT_PATH
+ 
+ #: The default path for Boom configuration files.
+-_DEFAULT_BOOM_DIR = "boom"
++DEFAULT_BOOM_DIR = "boom"
+ 
+ #: The root directory for Boom configuration files.
+-DEFAULT_BOOM_PATH = path_join(DEFAULT_BOOT_PATH, _DEFAULT_BOOM_DIR)
+-__boom_root = DEFAULT_BOOM_PATH
++DEFAULT_BOOM_PATH = path_join(DEFAULT_BOOT_PATH, DEFAULT_BOOM_DIR)
+ 
+ #: Kernel version string, in ``uname -r`` format.
+ FMT_VERSION = "version"
+@@ -80,6 +78,7 @@ FORMAT_KEYS = [
+ ]
+ 
+ _MACHINE_ID = "/etc/machine-id"
++_DBUS_MACHINE_ID = "/var/lib/dbus/machine-id"
+ 
+ BOOM_LOG_DEBUG = logging.DEBUG
+ BOOM_LOG_INFO = logging.INFO
+@@ -159,7 +158,7 @@ class BoomLogger(logging.Logger):
+             :returntype: None
+         """
+         if self.mask_bits & get_debug_mask():
+-            super(BoomLogger, self).debug(msg, *args, **kwargs)
++            self.debug(msg, *args, **kwargs)
+ 
+ logging.setLoggerClass(BoomLogger)
+ 
+@@ -185,13 +184,102 @@ def set_debug_mask(mask):
+     __debug_mask = mask
+ 
+ 
++class BoomConfig(object):
++    """Class representing boom persistent configuration values.
++    """
++
++    # Initialise members from global defaults
++
++    boot_path = DEFAULT_BOOT_PATH
++    boom_path = DEFAULT_BOOM_PATH
++
++    legacy_enable = False
++    legacy_format = "grub1"
++    legacy_sync = True
++
++    def __str__(self):
++        """Return a string representation of this ``BoomConfig`` in
++            boom.conf (INI) notation.
++        """
++        cstr = ""
++        cstr += '[defaults]\n'
++        cstr += 'boot_path = "%s"\n' % self.boot_path
++        cstr += 'boom_path = "%s"\n\n' % self.boom_path
++
++        cstr += '[legacy]\n'
++        cstr += 'enable = "%s"\n' % self.legacy_enable
++        cstr += 'format = "%s"\n' % self.legacy_format
++        cstr += 'sync = "%s"' % self.legacy_sync
++
++        return cstr
++
++    def __repr__(self):
++        """Return a string representation of this ``BoomConfig`` in
++            BoomConfig initialiser notation.
++        """
++        cstr = ('BoomConfig(boot_path="%s",boom_path="%s",' %
++                (self.boot_path, self.boom_path))
++        cstr += ('enable_legacy="%s",legacy_format="%s",' %
++                 (self.legacy_enable, self.legacy_format))
++        cstr += 'legacy_sync="%s")' % self.legacy_sync
++        return cstr
++
++    def __init__(self, boot_path=None, boom_path=None, legacy_enable=None,
++                 legacy_format=None, legacy_sync=None):
++        """Initialise a new ``BoomConfig`` object with the supplied
++            configuration values, or defaults for any unset arguments.
++
++            :param boot_path: the path to the system /boot volume
++            :param boom_path: the path to the boom configuration dir
++            :param legacy_enable: enable legacy bootloader support
++            :param legacy_format: the legacy bootlodaer format to write
++            :param legacy_sync: the legacy sync mode
++        """
++        self.boot_path = boot_path or self.boot_path
++        self.boom_path = boom_path or self.boom_path
++        self.legacy_enable = legacy_enable or self.legacy_enable
++        self.legacy_format = legacy_format or self.legacy_format
++        self.legacy_sync = legacy_sync or self.legacy_sync
++
++
++__config = BoomConfig()
++
++def set_boom_config(config):
++    """Set the active configuration to the object ``config`` (which may
++        be any class that includes the ``BoomConfig`` attributes).
++
++        :param config: a configuration object
++        :returns: None
++        :raises: TypeError if ``config`` does not appear to have the
++                 correct attributes.
++    """
++    global __config
++
++    def has_value(obj, attr):
++        return hasattr(obj, attr) and getattr(obj, attr) is not None
++
++    if not has_value(config, "boot_path") or not has_value(config, "boom_path"):
++        raise TypeError("config does not appear to be a BoomConfig object.")
++
++    __config = config
++
++
++def get_boom_config():
++    """Return the active ``BoomConfig`` object.
++
++        :returntype: BoomConfig
++        :returns: the active configuration object
++    """
++    return __config
++
++
+ def get_boot_path():
+     """Return the currently configured boot file system path.
+ 
+         :returns: the path to the /boot file system.
+         :returntype: str
+     """
+-    return __boot_root
++    return __config.boot_path
+ 
+ def get_boom_path():
+     """Return the currently configured boom configuration path.
+@@ -199,7 +287,7 @@ def get_boom_path():
+         :returns: the path to the BOOT/boom directory.
+         :returntype: str
+     """
+-    return __boom_root
++    return __config.boom_path
+ 
+ def set_boot_path(boot_path):
+     """Sets the location of the boot file system to ``boot_path``.
+@@ -216,53 +304,51 @@ def set_boot_path(boot_path):
+ 
+         :param boot_path: the path to the 'boom/' directory containing
+                           boom profiles and configuration.
+-        :returns: ``None``
++        :returnsNone: ``None``
+         :raises: ValueError if ``boot_path`` does not exist.
+     """
+-    global __boot_root, __boom_root
++    global __config
+     if not isabs(boot_path):
+         raise ValueError("boot_path must be an absolute path: %s" % boot_path)
+ 
+     if not path_exists(boot_path):
+         raise ValueError("Path '%s' does not exist" % boot_path)
+ 
+-    __boot_root = boot_path
+-    _log_debug("Set boot path to: %s" % __boot_root)
+-    __boom_root = path_join(boot_path, _DEFAULT_BOOM_DIR)
+-    _log_debug("Set boom path to: %s" % __boom_root)
++    __config.boot_path = boot_path
++    _log_debug("Set boot path to: %s" % boot_path)
++    __config.boom_path = path_join(boot_path, DEFAULT_BOOM_DIR)
++    _log_debug("Set boom path to: %s" % __config.boom_path)
+ 
+ 
+-def set_boom_path(root_path):
++def set_boom_path(boom_path):
+     """Set the location of the boom configuration directory.
+ 
+         Set the location of the boom configuration path stored in
+-        ``__boom_root`` to ``root_path``. ``__boom_root`` defaults to the
++        the active configuration to ``boom_path``. This defaults to the
+         'boom/' sub-directory in the boot file system specified by
+-        ``__boot_root``: this may be overridden by calling this function
+-        with a different path.
+-
+-        Paths must be set before importing any other boom API module:
+-        changes are not automatically propagated to sub-modules.
++        ``config.boot_path``: this may be overridden by calling this
++        function with a different path.
+ 
+-        :param root_path: the path to the 'boom/' directory containing
++        :param boom_path: the path to the 'boom/' directory containing
+                           boom profiles and configuration.
+         :returns: ``None``
+-        :raises: ValueError if ``root_path`` does not exist.
++        :raises: ValueError if ``boom_path`` does not exist.
+     """
+-    global __boot_root, __boom_root
+-    if isabs(root_path) and not path_exists(root_path):
+-        raise ValueError("Root path %s does not exist" % root_path)
+-    elif not path_exists(path_join(__boot_root, root_path)):
+-        raise ValueError("Root path %s does not exist" % root_path)
++    global __config
++    if isabs(boom_path) and not path_exists(boom_path):
++        raise ValueError("Boom path %s does not exist" % boom_path)
++    elif not path_exists(path_join(__config.boot_path, boom_path)):
++        raise ValueError("Boom path %s does not exist" % boom_path)
+ 
+-    if not isabs(root_path):
+-        root_path = path_join(__boot_root, root_path)
++    if not isabs(boom_path):
++        boom_path = path_join(__config.boot_bath, boom_path)
+ 
+-    if not path_exists(path_join(root_path, "profiles")):
+-        raise ValueError("Root path is not a boom configuration path.")
++    if not path_exists(path_join(boom_path, "profiles")):
++        raise ValueError("Path does not contain a valid boom configuration"
++                         ": %s" % path_join(boom_path, "profiles"))
+ 
+-    _log_debug("Set boom path to: %s" % _DEFAULT_BOOM_DIR)
+-    __boom_root = root_path
++    _log_debug("Set boom path to: %s" % DEFAULT_BOOM_DIR)
++    __config.boom_path = boom_path
+ 
+ 
+ def _parse_btrfs_subvol(subvol):
+@@ -634,7 +720,14 @@ def _get_machine_id():
+         :returns: The ``machine_id`` as a string
+         :returntype: str
+     """
+-    with open(_MACHINE_ID, "r") as f:
++    if path_exists(_MACHINE_ID):
++        path = _MACHINE_ID
++    elif path_exists(_DBUS_MACHINE_ID):
++        path = _DBUS_MACHINE_ID
++    else:
++        return None
++
++    with open(path, "r") as f:
+         try:
+             machine_id = f.read().strip()
+         except Exception as e:
+@@ -648,6 +741,9 @@ __all__ = [
+     # boom module constants
+     'DEFAULT_BOOT_PATH', 'DEFAULT_BOOM_PATH',
+ 
++    # Configuration class
++    'BoomConfig',
++
+     # Profile format keys
+     'FMT_VERSION',
+     'FMT_LVM_ROOT_LV',
+@@ -671,6 +767,10 @@ __all__ = [
+     'set_boot_path',
+     'set_boom_path',
+ 
++    # Persistent configuration
++    'set_boom_config',
++    'get_boom_config',
++
+     # boom exception base class
+     'BoomError',
+ 
+diff --git a/boom/bootloader.py b/boom/bootloader.py
+index 228c52b..f3669d9 100644
+--- a/boom/bootloader.py
++++ b/boom/bootloader.py
+@@ -42,7 +42,7 @@ from boom.osprofile import *
+ 
+ from os.path import basename, exists as path_exists, join as path_join
+ from tempfile import mkstemp
+-from os import listdir, rename, fdopen, chmod, unlink, fdatasync, stat
++from os import listdir, rename, fdopen, chmod, unlink, fdatasync, stat, dup
+ from stat import S_ISBLK
+ from hashlib import sha1
+ import logging
+@@ -106,8 +106,20 @@ KEY_MAP = {
+     BOOT_DEVICETREE: "devicetree"
+ }
+ 
++
++def __make_map_key(key_map):
++    """Compatibility function to generate a reverse dictionary on
++        Python 2.6 which does not support dictionary comprehension
++        notation.
++    """
++    map_key = {}
++    for k, v in key_map.items():
++        map_key[v] = k
++    return map_key
++
++
+ #: Map BLS entry keys to Boom names
+-MAP_KEY = {v: k for k, v in KEY_MAP.items()}
++MAP_KEY = __make_map_key(KEY_MAP)
+ 
+ # Module logging configuration
+ _log = logging.getLogger(__name__)
+@@ -1491,6 +1503,10 @@ class BootEntry(object):
+         entry_path = self._entry_path
+         (tmp_fd, tmp_path) = mkstemp(prefix="boom", dir=boom_entries_path())
+         with fdopen(tmp_fd, "w") as f:
++            # Our original file descriptor will be closed on exit from the
++            # fdopen with statement: save a copy so that we can call fdatasync
++            # once at the end of writing rather than on each loop iteration.
++            tmp_fd = dup(tmp_fd)
+             if self._osp:
+                 # Insert OsIdentifier comment at top-of-file
+                 f.write("#OsIdentifier: %s\n" % self._osp.os_id)
+@@ -1503,8 +1519,8 @@ class BootEntry(object):
+                 key_data = (_transform_key(key), getattr(self, key))
+                 f.write(key_fmt % key_data)
+                 f.flush()
+-                fdatasync(f.fileno())
+         try:
++            fdatasync(tmp_fd)
+             rename(tmp_path, entry_path)
+             chmod(entry_path, BOOT_ENTRY_MODE)
+         except Exception as e:
+diff --git a/boom/command.py b/boom/command.py
+index 017d434..3702244 100644
+--- a/boom/command.py
++++ b/boom/command.py
+@@ -28,6 +28,8 @@ from boom import *
+ from boom.osprofile import *
+ from boom.report import *
+ from boom.bootloader import *
++from boom.legacy import *
++from boom.config import *
+ 
+ import sys
+ from os import environ, uname
+@@ -263,6 +265,16 @@ def _canonicalize_lv_name(lvname):
+         raise ValueError("Root logical volume name must be in VG/LV format.")
+     return lvname
+ 
++
++def __write_legacy():
++    """Synchronise boom boot entries with the configured legacy
++        bootloader format.
++    """
++    config = get_boom_config()
++    if config.legacy_enable and config.legacy_sync:
++        write_legacy_loader(selection=Selection(), loader=config.legacy_format)
++
++
+ #
+ # Command driven API: BootEntry and OsProfile management and reporting.
+ #
+@@ -324,6 +336,7 @@ def create_entry(title, version, machine_id, root_device, lvm_root_lv=None,
+ 
+     if write:
+         be.write_entry()
++        __write_legacy()
+ 
+     return be
+ 
+@@ -357,6 +370,8 @@ def delete_entries(selection=None):
+         be.delete_entry()
+         deleted += 1
+ 
++    __write_legacy()
++
+     return deleted
+ 
+ 
+@@ -428,6 +443,7 @@ def clone_entry(selection=None, title=None, version=None, machine_id=None,
+ 
+     if write:
+         clone_be.write_entry()
++        __write_legacy()
+ 
+     return clone_be
+ 
+@@ -488,8 +504,11 @@ def edit_entry(selection=None, title=None, version=None, machine_id=None,
+     be.bp.lvm_root_lv = lvm_root_lv or be.bp.lvm_root_lv
+     be.bp.btrfs_subvol_path = btrfs_subvol_path or be.bp.btrfs_subvol_path
+     be.bp.btrfs_subvol_id = btrfs_subvol_id or be.bp.btrfs_subvol_id
++
+     if write:
+         be.write_entry()
++        __write_legacy()
++
+     return be
+ 
+ 
+@@ -592,6 +611,7 @@ def _os_profile_from_file(os_release, uname_pattern,
+     osp.write_profile()
+     return osp
+ 
++
+ def create_profile(name, short_name, version, version_id,
+                    uname_pattern=None, kernel_pattern=None,
+                    initramfs_pattern=None, root_opts_lvm2=None,
+@@ -906,6 +926,20 @@ def print_profiles(selection=None, opts=None, output_fields=None,
+ 
+     return br.report_output()
+ 
++
++def show_legacy(selection=None, loader=BOOM_LOADER_GRUB1):
++    """Print boot entries in legacy boot loader formats.
++
++        :param selection: A Selection object giving selection criteria
++                          for the operation
++        :param fmt: The name of a legacy boot loader format
++    """
++    (name, decorator, path)  = find_legacy_loader(loader, None)
++    bes = find_entries(selection=selection)
++    for be in bes:
++        gbe = Grub1BootEntry(entry_data=be._entry_data)
++        print(gbe)
++
+ #
+ # boom command line tool
+ #
+@@ -913,9 +947,12 @@ def print_profiles(selection=None, opts=None, output_fields=None,
+ def _apply_profile_overrides(boot_entry, cmd_args):
+     if cmd_args.linux:
+         boot_entry.linux = cmd_args.linux
++        modified = True
+ 
+     if cmd_args.initrd:
+         boot_entry.initrd = cmd_args.initrd
++        modified = True
++
+ 
+ def _create_cmd(cmd_args, select, opts, identifier):
+     """Create entry command handler.
+@@ -954,6 +991,7 @@ def _create_cmd(cmd_args, select, opts, identifier):
+         # Use host machine-id by default
+         machine_id = _get_machine_id()
+         if not machine_id:
++            print("Could not determine machine_id")
+             return 1
+     else:
+         machine_id = cmd_args.machine_id
+@@ -1011,7 +1049,11 @@ def _create_cmd(cmd_args, select, opts, identifier):
+ 
+     try:
+         be.write_entry()
++        __write_legacy()
+     except Exception as e:
++        if cmd_args.debug:
++            raise
++        print(e)
+         return 1
+ 
+     print("Created entry with boot_id %s:" % be.disp_boot_id)
+@@ -1051,6 +1093,7 @@ def _delete_cmd(cmd_args, select, opts, identifier):
+     except (ValueError, IndexError) as e:
+         print(e)
+         return 1
++
+     print("Deleted %d entr%s" % (nr, "ies" if nr > 1 else "y"))
+ 
+ 
+@@ -1107,7 +1150,11 @@ def _clone_cmd(cmd_args, select, opts, identifier):
+ 
+     try:
+         be.write_entry()
+-    except:
++        __write_legacy()
++    except Exception as e:
++        if cmd_args.debug:
++            raise
++        print(e)
+         return 1
+ 
+     print("Cloned entry with boot_id %s as boot_id %s:" %
+@@ -1209,7 +1256,11 @@ def _edit_cmd(cmd_args, select, opts, identifier):
+ 
+     try:
+         be.write_entry()
+-    except:
++        __write_legacy()
++    except Exception as e:
++        if cmd_args.debug:
++            raise
++        print(e)
+         return 1
+ 
+     print("Edited entry, boot_id now: %s" % be.disp_boot_id)
+@@ -1474,7 +1525,40 @@ def _edit_profile_cmd(cmd_args, select, opts, identifier):
+     return 0
+ 
+ 
+-pass
++def _write_legacy_cmd(cmd_args, select, opts, identifier):
++    if identifier:
++        print("write legacy does not accept a boot_id")
++        return 1
++    config = get_boom_config()
++    try:
++        clear_legacy_loader()
++        write_legacy_loader(selection=select, loader=config.legacy_format)
++    except Exception as e:
++        print(e)
++        return 1
++
++
++def _clear_legacy_cmd(cmd_args, select, opts, identifier):
++    """Remove all boom entries from the legacy bootloader configuration.
++
++        :param cmd_args: Command line arguments for the command
++        :returns: integer status code returned from ``main()``
++    """
++    if identifier:
++        print("write legacy does not accept a boot_id")
++        return 1
++
++    try:
++        clear_legacy_loader()
++    except BoomLegacyFormatError as e:
++        print(e)
++        return 1
++
++
++def _show_legacy_cmd(cmd_args, select, opts, identifier):
++    # FIXME: args
++    config = get_boom_config()
++    show_legacy(selection=select, loader=config.legacy_format)
+ 
+ 
+ boom_usage = """%(prog}s [type] <command> [options]\n\n"
+@@ -1487,17 +1571,23 @@ boom_usage = """%(prog}s [type] <command> [options]\n\n"
+                 profile delete [...]
+                 profile list [...]
+                 profile edit [...]
++                legacy write [...]
++                legacy delete [...]
+              """
+ 
+ CREATE_CMD = "create"
+ DELETE_CMD = "delete"
+ CLONE_CMD = "clone"
++CLEAR_CMD = "clear"
+ SHOW_CMD = "show"
+ LIST_CMD = "list"
+ EDIT_CMD = "edit"
+ 
++WRITE_CMD = "write"
++
+ ENTRY_TYPE = "entry"
+ PROFILE_TYPE = "profile"
++LEGACY_TYPE = "legacy"
+ 
+ _boom_entry_commands = [
+     (CREATE_CMD, _create_cmd),
+@@ -1517,9 +1607,16 @@ _boom_profile_commands = [
+     (EDIT_CMD, _edit_profile_cmd)
+ ]
+ 
++_boom_legacy_commands = [
++    (WRITE_CMD, _write_legacy_cmd),
++    (CLEAR_CMD, _clear_legacy_cmd),
++    (SHOW_CMD, _show_legacy_cmd)
++]
++
+ _boom_command_types = [
+     (ENTRY_TYPE, _boom_entry_commands),
+-    (PROFILE_TYPE, _boom_profile_commands)
++    (PROFILE_TYPE, _boom_profile_commands),
++    (LEGACY_TYPE, _boom_legacy_commands)
+ ]
+ 
+ 
+@@ -1645,6 +1742,8 @@ def main(args):
+                         help="The path or ID of a BTRFS subvolume")
+     parser.add_argument("--btrfs-opts", "--btrfsopts", metavar="OPTS", type=str,
+                         help="A template option string for BTRFS devices")
++    parser.add_argument("-c", "--config", metavar="FILE", type=str,
++                        help="Path to a boom configuration file", default=None)
+     parser.add_argument("--debug", metavar="DEBUGOPTS", type=str,
+                         help="A list of debug options to enable")
+     parser.add_argument("-e", "--efi", metavar="IMG", type=str,
+@@ -1715,13 +1814,23 @@ def main(args):
+                         "boot entry")
+     cmd_args = parser.parse_args()
+ 
+-    set_debug(cmd_args.debug)
++    try:
++        set_debug(cmd_args.debug)
++    except ValueError as e:
++        print(e)
++        return 1
+     setup_logging(cmd_args)
+     cmd_type = _match_cmd_type(cmd_args.type)
+ 
+     if cmd_args.boot_dir or BOOM_BOOT_PATH_ENV in environ:
+         boot_path = cmd_args.boot_dir or environ[BOOM_BOOT_PATH_ENV]
+         set_boot_path(boot_path)
++        set_boom_config_path("boom.conf")
++
++    if cmd_args.config:
++        set_boom_config_path(cmd_args.config)
++
++    load_boom_config(path=cmd_args.config)
+ 
+     # Parse an LV name from root_lv and re-write the root_device if found
+     if cmd_args.root_lv:
+diff --git a/boom/config.py b/boom/config.py
+new file mode 100644
+index 0000000..d0208be
+--- /dev/null
++++ b/boom/config.py
+@@ -0,0 +1,242 @@
++# Copyright (C) 2017 Red Hat, Inc., Bryn M. Reeves <bmr@redhat.com>
++#
++# config.py - Boom persistent configuration
++#
++# This file is part of the boom project.
++#
++# This copyrighted material is made available to anyone wishing to use,
++# modify, copy, or redistribute it subject to the terms and conditions
++# of the GNU General Public License v.2.
++#
++# You should have received a copy of the GNU Lesser General Public License
++# along with this program; if not, write to the Free Software Foundation,
++# Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++"""The ``boom.config`` module defines classes and constants and functions
++for reading and writing persistent (on-disk) configuration for the boom
++library and tools.
++
++Users of the module can load and write configuration data, and obtain
++the values of configuration keys defined in the boom configuration file.
++"""
++from boom import *
++
++from os.path import (
++    isabs, isdir, dirname, exists as path_exists, join as path_join
++)
++
++from os import fdopen, rename, chmod, fdatasync, dup
++from tempfile import mkstemp
++from errno import ENOENT
++import logging
++
++try:
++    # Python2
++    from ConfigParser import SafeConfigParser as ConfigParser, ParsingError
++except:
++    # Python3
++    from configparser import ConfigParser, ParsingError
++
++class BoomConfigError(BoomError):
++    """Base class for boom configuration errors.
++    """
++    pass
++
++# Module logging configuration
++_log = logging.getLogger(__name__)
++
++_log_debug = _log.debug
++_log_info = _log.info
++_log_warn = _log.warning
++_log_error = _log.error
++
++#: Configuration file mode
++BOOT_CONFIG_MODE = 0o644
++
++#: The default configuration file location
++BOOM_CONFIG_FILE = "boom.conf"
++DEFAULT_BOOM_CONFIG_PATH = path_join(get_boom_path(), BOOM_CONFIG_FILE)
++__boom_config_path = DEFAULT_BOOM_CONFIG_PATH
++
++def get_boom_config_path():
++    """Return the currently configured boom configuration file path.
++
++        :returntype: str
++        :returns: the current boom configuration file path
++    """
++    return __boom_config_path
++
++
++def set_boom_config_path(path):
++    """Set the boom configuration file path.
++    """
++    global __boom_config_path
++    path = path or get_boom_config_path()
++    if not isabs(path):
++        path = path_join(get_boom_path())
++    if isdir(path):
++        path = path_join(path, BOOM_CONFIG_FILE)
++    if not path_exists(path):
++        raise IOError(ENOENT, "File not found: '%s'" % path)
++    __boom_config_path = path
++    _log_debug("set boom_config_path to '%s'" % path)
++
++
++#
++# Constants for configuration sections and options: to add a new option,
++# create a new _CFG_* constant giving the name of the option and add a
++# hook to load_boom_config() to set the value when read.
++#
++# To add a new section add the section name constant as _CFG_SECT_* and
++# add a new branch to load_boom_config() to test for the presence of
++# the section and handle the options found within.
++#
++_CFG_SECT_GLOBAL = "global"
++_CFG_SECT_LEGACY = "legacy"
++_CFG_BOOT_ROOT = "boot_root"
++_CFG_BOOM_ROOT = "boom_root"
++_CFG_LEGACY_ENABLE = "enable"
++_CFG_LEGACY_FMT = "format"
++_CFG_LEGACY_SYNC = "sync"
++
++
++def read_boom_config(path=None):
++    """Read boom persistent configuration values from the defined path
++        and return them as a ``BoomConfig`` object.
++
++        :param path: the configuration file to read, or None to read the
++                     currently configured config file path.
++
++        :returntype: BoomConfig
++    """
++    path = path or get_boom_config_path()
++    _log_debug("reading boom configuration from '%s'" % path)
++    cfg = ConfigParser()
++    try:
++        cfg.read(path)
++    except ParsingError as e:
++        _log_error("Failed to parse configuration file '%s': %s" %
++                   (path, e))
++
++    bc = BoomConfig()
++
++    trues = ['True', 'true', 'Yes', 'yes']
++
++    if cfg.has_section(_CFG_SECT_GLOBAL):
++        if cfg.has_option(_CFG_SECT_GLOBAL, _CFG_BOOT_ROOT):
++            _log_debug("Found global.boot_path")
++            bc.boot_path = cfg.get(_CFG_SECT_GLOBAL, _CFG_BOOT_ROOT)
++        if cfg.has_option(_CFG_SECT_GLOBAL, _CFG_BOOM_ROOT):
++            _log_debug("Found global.boom_path")
++            bc.boom_path = cfg.get(_CFG_SECT_GLOBAL, _CFG_BOOM_ROOT)
++
++    if cfg.has_section(_CFG_SECT_LEGACY):
++        if cfg.has_option(_CFG_SECT_LEGACY, _CFG_LEGACY_ENABLE):
++            _log_debug("Found legacy.enable")
++            enable = cfg.get(_CFG_SECT_LEGACY, _CFG_LEGACY_ENABLE)
++            bc.legacy_enable = any([t for t in trues if t in enable])
++
++        if cfg.has_option(_CFG_SECT_LEGACY, _CFG_LEGACY_FMT):
++            bc.legacy_format = cfg.get(_CFG_SECT_LEGACY,
++                                       _CFG_LEGACY_FMT)
++
++        if cfg.has_option(_CFG_SECT_LEGACY, _CFG_LEGACY_SYNC):
++            _log_debug("Found legacy.sync")
++            sync = cfg.get(_CFG_SECT_LEGACY, _CFG_LEGACY_SYNC)
++            bc.legacy_sync = any([t for t in trues if t in sync])
++
++    _log_debug("read configuration: %s" % repr(bc))
++    bc._cfg = cfg
++    return bc
++
++
++def load_boom_config(path=None):
++    """Load boom persistent configuration values from the defined path
++        and make the them the active configuration.
++
++        :param path: the configuration file to read, or None to read the
++                     currently configured config file path
++
++        :returntype: None
++    """
++    bc = read_boom_config(path=path)
++    set_boom_config(bc)
++
++
++def __sync_config(bc, cfg):
++    """Sync the configuration values of ``BoomConfig`` object ``bc`` to
++        the ``ConfigParser`` ``cfg``.
++    """
++
++    def attr_has_value(obj, attr):
++        return hasattr(obj, attr) and getattr(obj, attr) is not None
++
++    if attr_has_value(bc, "boot_path"):
++        cfg.set(_CFG_SECT_GLOBAL, _CFG_BOOT_ROOT, bc.boot_path)
++    if attr_has_value(bc, "boom_path"):
++        cfg.set(_CFG_SECT_GLOBAL, _CFG_BOOM_ROOT, bc.boom_path)
++    if attr_has_value(bc, "legacy_enable"):
++        cfg.set(_CFG_SECT_LEGACY, _CFG_LEGACY_ENABLE, str(bc.legacy_enable))
++    if attr_has_value(bc, "legacy_format"):
++        cfg.set(_CFG_SECT_LEGACY, _CFG_LEGACY_FMT, bc.legacy_format)
++    if attr_has_value(bc, "legacy_sync"):
++        cfg.set(_CFG_SECT_LEGACY, _CFG_LEGACY_SYNC, bc.legacy_sync)
++
++
++def __make_config(bc):
++    """Create a new ``ConfigParser`` corresponding to the ``BoomConfig``
++        object ``bc`` and return the result.
++    """
++    cfg = ConfigParser()
++    cfg.add_section("global")
++    cfg.add_section("legacy")
++    __sync_config(bc, cfg)
++    return bc
++
++
++def write_boom_config(config=None, path=None):
++    """Write boom configuration to disk.
++
++        :param config: the configuration values to write, or None to
++                       write the current configuration
++        :param path: the configuration file to read, or None to read the
++                     currently configured config file path
++
++        :returntype: None
++    """
++    path = path or get_boom_config_path()
++    cfg_dir = dirname(path)
++    (tmp_fd, tmp_path) = mkstemp(prefix="boom", dir=cfg_dir)
++
++    config = config or get_boom_config()
++
++    if not config._cfg:
++        config._cfg = __make_config(config)
++    else:
++        __sync_config(config, config._cfg)
++
++    with fdopen(tmp_fd, "w") as f_tmp:
++        config._cfg.write(f_tmp)
++        fdatasync(tmp_fd)
++
++    try:
++        rename(tmp_path, path)
++        chmod(path, BOOT_CONFIG_MODE)
++    except Exception as e:
++        _log_error("Error writing configuration file %s: %s" %
++                   (path, e))
++        try:
++            unlink(tmp_path)
++        except:
++            pass
++        raise e
++
++
++__all__ = [
++    'BOOM_CONFIG_FILE',
++
++    # Configuration file handling
++    'set_boom_config_path',
++    'get_boom_config_path',
++    'load_boom_config',
++    'write_boom_config'
++]
+diff --git a/boom/legacy.py b/boom/legacy.py
+new file mode 100644
+index 0000000..0d765d8
+--- /dev/null
++++ b/boom/legacy.py
+@@ -0,0 +1,374 @@
++# Copyright (C) 2017 Red Hat, Inc., Bryn M. Reeves <bmr@redhat.com>
++#
++# legacy.py - Boom legacy bootloader manager
++#
++# This file is part of the boom project.
++#
++# This copyrighted material is made available to anyone wishing to use,
++# modify, copy, or redistribute it subject to the terms and conditions
++# of the GNU General Public License v.2.
++#
++# You should have received a copy of the GNU Lesser General Public License
++# along with this program; if not, write to the Free Software Foundation,
++# Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++"""The ``boom.legacy`` module defines classes and constants for working
++with legacy bootloader configuration formats.
++
++Legacy formats are read-only and can only be updated by synchronising
++the entire current set of boot entries to the legacy format, or removing
++all entries from the legacy configuration file.
++"""
++from boom import *
++from boom.bootloader import *
++
++from subprocess import Popen, PIPE
++from os.path import dirname, exists as path_exists, join as path_join
++from os.path import isabs
++from os import fdopen, rename, chmod, fdatasync, dup
++from tempfile import mkstemp
++import logging
++import re
++
++#: Format strings use to construct begin/end markers
++BOOM_LEGACY_BEGIN_FMT="#--- BOOM_%s_BEGIN ---"
++BOOM_LEGACY_END_FMT="#--- BOOM_%s_END ---"
++
++#: Constants for legacy boot loaders supported by boom
++BOOM_LOADER_GRUB1="grub1"
++BOOM_GRUB1_CFG_PATH="grub/grub.conf"
++
++# Module logging configuration
++_log = logging.getLogger(__name__)
++
++_log_debug = _log.debug
++_log_info = _log.info
++_log_warn = _log.warning
++_log_error = _log.error
++
++
++#: Grub1 root device cache
++__grub1_device = None
++
++def _get_grub1_device(force=False):
++    """Determine the current grub1 root device and return it as a
++        string. This function will attempt to use a cached value
++        from a previous call (to avoid shelling out to Grub a
++        second time), unless the ``force`` argument is ``True``.
++
++        If no usable Grub1 environment is detected the function
++        raises the ``BoomLegacyLoaderError`` exception.
++
++        :param force: force the cache to be updated.
++    """
++    # Grub1 device cache
++    global __grub1_device
++
++    if __grub1_device and not force:
++        return __grub1_device
++
++    # The grub1 binary
++    grub_cmd = "grub"
++    # The command to issue to discover the /boot device
++    find_cmd = "find /%s\n" % _loader_map[BOOM_LOADER_GRUB1][2]
++    # Regular expression matching a valid grub device string
++    find_rgx = r" \(hd\d+,\d+\)"
++
++    try:
++        _log_debug("Calling grub1 shell with '%s'" % find_cmd)
++        p = Popen(grub_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
++        out = p.communicate(input=find_cmd)
++    except OSError:
++        raise BoomLegacyLoaderError("Could not execute grub1 shell.")
++
++    for line in out[0].splitlines():
++        if re.match(find_rgx, line):
++            __grub1_device = line.lstrip().rstrip()
++            _log_debug("Set grub1 device to '%s'" % __grub1_device)
++            return _get_grub1_device()
++
++
++class BoomLegacyFormatError(BoomError):
++    """Boom exception indicating an invalid or corrupt boom legacy
++        boot configuration, for example, missing begin or end marks
++        in the legacy bootloader configuration file, or an unknown
++        or invalid legacy bootloader type.
++    """
++    pass
++
++
++def find_legacy_loader(loader, cfg_path):
++    """Look up a legacy loader format in the table of available formats
++        and return a tuple containing the format name, decorator class
++        and the configuration file path. If ``cfg_path`` is set it will
++        override the default file location for the format.
++
++        :param loader: the legacy bootloader format to operate on
++        :param cfg_path: the path to the legacy bootloader configuration
++                         file. If ``cfg_path`` is None the default path
++                         for the specified loader will be used.
++        :raises BoomLegacyFormatError: if the legacy configuration file
++                                       contains invalid boom entries or
++                                       the specified legacy format is
++                                       unknown or invalid.
++        :returns: (decorator, path) tuple
++    """
++    if not loader:
++        raise BoomLegacyFormatError("Invalid legacy bootloader format: %s" %
++                                    loader)
++    if loader not in _loader_map:
++        raise BoomLegacyFormatError("Unknown legacy bootloader format: %s" %
++                                    loader)
++
++    (name, decorator, path) = _loader_map[loader]
++    path = cfg_path or path
++    return (name, decorator, path)
++
++
++def write_legacy_loader(selection=None, loader=BOOM_LOADER_GRUB1,
++                        cfg_path=None):
++    """Synchronise boom's configuration with the specified legacy boot
++        loader.
++
++        For boot loaders that support only a single configuration file
++        with multiple boot entries, boom will generate a block of
++        configuration statements bounded by "BOOM_BEGIN"/"BOOM_END" on
++        a line by themselves and prefixed with the comment character
++        for that configuration format (e.g. '#').
++
++        :param loader: the legacy boot loader type to write
++    """
++    (name, decorator, path) = find_legacy_loader(loader, cfg_path)
++
++    if not isabs(path):
++        path = path_join(get_boot_path(), path)
++
++    cfg_dir = dirname(path)
++
++    begin_tag = BOOM_LEGACY_BEGIN_FMT % name
++    end_tag = BOOM_LEGACY_END_FMT % name
++
++    (tmp_fd, tmp_path) = mkstemp(prefix="boom", dir=cfg_dir)
++
++    def _legacy_format_error(err, fmt_data):
++        """Helper function to clean up the temporary file and raise the
++            corresponding BoomLegacyFormatError exception.
++        """
++        if type(fmt_data[0]) == int:
++            fmt_data = ("line %d" % fmt_data[0], fmt_data[1])
++
++        try:
++            unlink(tmp_path)
++        except:
++            pass
++        raise BoomLegacyFormatError(err % fmt_data)
++
++    with fdopen(tmp_fd, "w") as tmp_f:
++        # Our original file descriptor will be closed on exit from the
++        # fdopen with statement: save a copy so that we can call fdatasync
++        # once at the end of writing rather than on each loop iteration.
++        tmp_fd = dup(tmp_fd)
++        with open(path, "r") as cfg_f:
++            for line in cfg_f:
++                tmp_f.write(line)
++
++        tmp_f.write(begin_tag + "\n")
++        bes = find_entries(selection=selection)
++        for be in bes:
++            dbe = decorator(be)
++            tmp_f.write(str(dbe) + "\n")
++        tmp_f.write(end_tag + "\n")
++
++    try:
++        fdatasync(tmp_fd)
++        rename(tmp_path, path)
++        chmod(path, BOOT_ENTRY_MODE)
++    except Exception as e:
++        _log_error("Error writing legacy configuration file %s: %s" %
++                   (path, e))
++        try:
++            unlink(tmp_path)
++        except:
++            pass
++        raise e
++
++def clear_legacy_loader(loader=BOOM_LOADER_GRUB1, cfg_path=None):
++    """Delete all boom managed entries from the specified legacy boot
++        loader configuration file.
++
++        If the specified ``loader`` is unknown or invalid the
++        BoomLegacyFormatError exception is raised.
++
++        This erases any lines from the file beginning with a valid
++        'BOOM_*_BEGIN' line and ending with a valid 'BOOM_*_END' line.
++
++        If both marker lines are absent this function has no effect
++        and no error is raised: the file does not contain any existing
++        boom legacy configuration entries.
++
++        If one of the two markers is missing this function will not
++        modify the file and a BoomLegacyFormatError exception is
++        raised. Legacy configuration cannot be written in this case
++        as the file is in an inconsistent state that boom cannot
++        automatically correct.
++
++        If the configuration path is not absolute it is assumed to be
++        relative to the configured system '/boot' directory as returned
++        by ``boom.get_boot_path()``.
++
++        :param loader: the legacy bootloader format to operate on
++        :param cfg_path: the path to the legacy bootloader configuration
++                         file. If ``cfg_path`` is None the default path
++                         for the specified loader will be used.
++        :raises BoomLegacyFormatError: if the legacy configuration file
++                                       contains invalid boom entries or
++                                       the specified legacy format is
++                                       unknown or invalid.
++        :returns: None
++    """
++    (name, decorator, path) = find_legacy_loader(loader, cfg_path)
++
++    if not isabs(path):
++        path = path_join(get_boot_path(), path)
++
++    cfg_dir = dirname(path)
++
++    begin_tag = BOOM_LEGACY_BEGIN_FMT % name
++    end_tag = BOOM_LEGACY_END_FMT % name
++
++    # Pre-set configuration error messages. Use a string format for
++    # the line number so that 'EOF' can be passed for end-of-file.
++    err_dupe_begin = ("Duplicate Boom begin tag at %s in legacy " + 
++                      "configuration file '%s'")
++    err_dupe_end = ("Duplicate Boom end tag at %s in legacy " +
++                    "configuration file '%s'")
++    err_no_begin = ("Missing Boom begin tag at %s in legacy " +
++                    "configuration file '%s'")
++    err_no_end = ("Missing Boom end tag at %s in legacy " +
++                  "configuration file '%s'")
++
++    line_nr = 1
++    found_boom = False
++    in_boom_cfg = False
++
++    (tmp_fd, tmp_path) = mkstemp(prefix="boom", dir=cfg_dir)
++
++    def _legacy_format_error(err, fmt_data):
++        """Helper function to clean up the temporary file and raise the
++            corresponding BoomLegacyFormatError exception.
++        """
++        if type(fmt_data[0]) == int:
++            fmt_data = ("line %d" % fmt_data[0], fmt_data[1])
++
++        try:
++            unlink(tmp_path)
++        except:
++            pass
++        raise BoomLegacyFormatError(err % fmt_data)
++
++    with fdopen(tmp_fd, "w") as tmp_f:
++        # Our original file descriptor will be closed on exit from the
++        # fdopen with statement: save a copy so that we can call fdatasync
++        # once at the end of writing rather than on each loop iteration.
++        tmp_fd = dup(tmp_fd)
++        with open(path, "r") as cfg_f:
++            for line in cfg_f:
++                if begin_tag in line:
++                    if in_boom_cfg or found_boom:
++                        _legacy_format_error(err_dupe_begin, (line_nr, path))
++                    in_boom_cfg = True
++                    continue
++
++                if end_tag in line:
++                    if found_boom:
++                        _legacy_format_error(err_dupe_end, (line_nr, path))
++                    if not in_boom_cfg:
++                        _legacy_format_error(err_no_begin, (line_nr, path))
++                    in_boom_cfg = False
++                    found_boom = True
++                    continue
++
++                if not in_boom_cfg:
++                    tmp_f.write(line)
++
++                line_nr += 1
++
++    if in_boom_cfg and not found_boom:
++        _legacy_format_error(err_no_end, ("EOF", path))
++
++    if not found_boom:
++        # No boom entries: nothing to do.
++        try:
++            unlink(tmp_path)
++        except:
++            pass
++        return
++
++    try:
++        fdatasync(tmp_fd)
++        rename(tmp_path, path)
++        chmod(path, BOOT_ENTRY_MODE)
++    except Exception as e:
++        _log_error("Error writing legacy configuration file %s: %s" %
++                   (path, e))
++        try:
++            unlink(tmp_path)
++        except:
++            pass
++        raise e
++
++
++class Grub1BootEntry(object):
++    """Class transforming a Boom ``BootEntry`` into legacy Grub1
++        boot entry notation.
++
++        The Grub1BootEntry decorates the ``__str__`` method of the
++        BootEntry superclass by returning data formatted in Grub1
++        configuration notation rather than BLS.
++
++        Currently this uses a simple fixed format string for the
++        Grub1 syntax. If additional legacy formats are required it
++        may be better to extend the generic BootEntry.__str()
++        formatter to be able to accept maps of alternate format
++        keys. This is somewhat complicated by aspects like the
++        grub1 boot device key (since this has no representation or
++        equivalent in BLS notation).
++    """
++
++    be = None
++
++    def __init__(self, boot_entry):
++        self.be = boot_entry
++
++    def __str__(self):
++        grub1_tab = " " * 8
++        grub1_fmt = ("title %s\n" + grub1_tab + "root %s\n" + grub1_tab +
++                     "kernel %s %s\n" + grub1_tab + "initrd %s")
++
++        return grub1_fmt % (self.be.title, _get_grub1_device(),
++                            self.be.linux, self.be.options, self.be.initrd)
++
++#: Map of legacy boot loader decorator classes and defaults.
++#: Each entry in _loader_map is a three tuple containing the
++#: format's name, decorator class and default configuration path.
++_loader_map = {
++    BOOM_LOADER_GRUB1: ("Grub1", Grub1BootEntry, BOOM_GRUB1_CFG_PATH)
++}
++
++__all__ = [
++    # Exception class for errors in legacy format handling
++    'BoomLegacyFormatError',
++
++    # Write legacy boot configuration
++    'write_legacy_loader',
++    'clear_legacy_loader',
++
++    # Lookup legacy boot loader formats
++    'find_legacy_loader',
++
++    # Legacy bootloader names
++    'BOOM_LOADER_GRUB1',
++
++    # Legacy bootloader decorator classes
++    'Grub1BootEntry'
++]
++
+diff --git a/examples/boom.conf b/examples/boom.conf
+new file mode 100644
+index 0000000..a96e8a0
+--- /dev/null
++++ b/examples/boom.conf
+@@ -0,0 +1,8 @@
++[global]
++boot_root = /boot
++boom_root = %(boot_root)s/boom
++
++[legacy]
++enable = False
++format = grub1
++sync = True
+diff --git a/man/man5/boom.5 b/man/man5/boom.5
+new file mode 100644
+index 0000000..d191b02
+--- /dev/null
++++ b/man/man5/boom.5
+@@ -0,0 +1,52 @@
++.TH BOOM 5 "Mar 09 2018" "Linux" "FILE FORMATS MANUAL"
++
++.
++.SH NAME
++.
++boom.conf \(em boom configuration file
++.
++.SH SYNOPSIS
++\fB/boot/boom/boom.conf\fP
++.
++.SH DESCRIPTION
++\fBboom.conf\fP is loaded during the initialisation of boom and contains
++configuration keys affecting boom's global behaviour and the setting of
++boom's legacy configuration support.
++
++The file is structured in \fBINI\fP format: section headers appear in
++square brackets and configuration values appear as key-value pairs with
++one pair per line.
++.
++.SH SECTIONS
++.TP
++.B global
++The global section contains the \fBboot_path\fP and \fBboom_path\fP
++keys that may be used to override the location of the \fB/boot\fP
++mount point and \fB/boot/boom\fP configuration directory respectively.
++.TP
++.B legacy
++The legacy section contains settings to enable and configure support
++for non-BLS boot loader configuration formats.
++
++To enable legacy boot loader support set the \fBenable\fP key to
++\fByes\fP or \fBtrue\fP and set the \fBformat\fP key to the required
++format (currently only \fbgrub\fP syntax is supported).
++
++If the value of the \fBsync\fP key is true the legacy configuration
++will be automatically written whenever entries are added, removed, or
++modified.
++.
++.SH AUTHORS
++.
++Bryn M. Reeves <bmr@redhat.com>
++.
++.SH SEE ALSO
++.
++Boom project page: https://github.com/bmr-cymru/boom
++.br
++Boot to snapshot documentation: https://github.com/bmr-cymru/snapshot-boot-docs
++.br
++LVM2 resource page: https://www.sourceware.org/lvm2/
++.br
++Device-mapper resource page: http://sources.redhat.com/dm/
++.br
+diff --git a/man/man8/boom.8 b/man/man8/boom.8
+index 865e1a9..6186c2c 100644
+--- a/man/man8/boom.8
++++ b/man/man8/boom.8
+@@ -292,7 +292,82 @@ Boom \(em linux boot manager
+ .  ad b
+ ..
+ .CMD_PROFILE_SHOW
+-
++.
++.HP
++.B boom
++.de CMD_LEGACY_WRITE
++.  ad l
++.  BR legacy
++.  BR \fBwrite
++.  IR [ boot_id ]
++.  RB [ --boot-id
++.  IR boot_id ]
++.  RB [ --profile
++.  IR os_id ]
++.  RB [ --version
++.  IR version ]
++.  RB [ --name
++.  IR osname ]
++.  RB [ --short-name
++.  IR osshortname ]
++.  RB [ --os-version
++.  IR version ]
++.  RB [ --root-device
++.  IR device ]
++.  RB [ --root-lv
++.  IR lv ]
++.  RB [ --linux
++.  IR kernel_path ]
++.  RB [ --initrd
++.  IR initrd_path ]
++.  RB [ --btrfs-subvol
++.  IR subvol ]
++.  ad b
++..
++.CMD_LEGACY_WRITE
++.
++.HP
++.B boom
++.de CMD_LEGACY_CLEAR
++.  ad l
++.  BR legacy
++.  BR \fBclear
++.  ad b
++..
++.CMD_LEGACY_CLEAR
++.
++.HP
++.B boom
++.de CMD_LEGACY_SHOW
++.  ad l
++.  BR legacy
++.  BR \fBshow
++.  IR [ boot_id ]
++.  RB [ --boot-id
++.  IR boot_id ]
++.  RB [ --profile
++.  IR os_id ]
++.  RB [ --version
++.  IR version ]
++.  RB [ --name
++.  IR osname ]
++.  RB [ --short-name
++.  IR osshortname ]
++.  RB [ --os-version
++.  IR version ]
++.  RB [ --root-device
++.  IR device ]
++.  RB [ --root-lv
++.  IR lv ]
++.  RB [ --linux
++.  IR kernel_path ]
++.  RB [ --initrd
++.  IR initrd_path ]
++.  RB [ --btrfs-subvol
++.  IR subvol ]
++.  ad b
++..
++.CMD_LEGACY_SHOW
+ .
+ .PD
+ .ad b
+@@ -302,11 +377,15 @@ Boom \(em linux boot manager
+ Boom is a \fIboot manager\fP for Linux systems using boot loaders that
+ support the \fBBootLoader Specification\fP for boot entry configuration.
+ 
+-Boom requires a BLS compatible boot loader to function: either the
++Boom works best with a BLS compatible boot loader: either the
+ \fIsystemd-boot\fP project, or \fIGrub2\fP with the `bls` patch. The
+ \fIgrub2\fP boot loader included in \fBFedora\fP and \fBRed Hat
+ Enterprise Linux\fP include this support.
+ 
++Boom also supports writing configuration in legacy boot loader format:
++currently the syntax used by the \fBGrub1\fP configuration file is
++supported.
++
+ All long options supported by boom may be written with or without
+ dashes separating words. For example, \fB--boot-id\fP and \fB--bootid\fP
+ are synonymous.
+@@ -748,6 +827,43 @@ Display OS profiles matching selection criteria on standard out.
+ OS profiles matching the criteria given on the command line are
+ printed to the terminal in a compact multi-line format.
+ .
++.SH LEGACY BOOTLOADER FORMATS
++Boom is able to write the current set of boot entries into the
++configuration file of a legacy boot loader installed on the
++system. This may be used either on platforms that do not have
++a native bootloader supporting the Boot Loader Specification,
++or to allow upgrades and recovery from an installation lacking
++BLS support (if the system is updated to a distribution that
++does support the BLS boot loader configuration it will be used
++automatically when present).
++
++Legacy support is enabled and configured via the \fBboom.conf(5)\fP
++configuration file.
++.
++.HP
++.B boom
++.CMD_LEGACY_WRITE
++.br
++Write out the current set of Boom boot entries in the configured
++legacy configuration file. The normal command line selection
++options may be used to control the set of entries written to the
++file.
++.
++.HP
++.B boom
++.CMD_LEGACY_CLEAR
++.br
++Remove all Boom boot entries from the configured legacy
++configuration file.
++.
++.HP
++.B boom
++.CMD_LEGACY_SHOW
++Display the selected boot entries as they would appear in the
++configured legacy boot loader format. The normal command line
++selection options may be used to control the set of entries
++written to the terminal.
++.
+ .SH REPORT FIELDS
+ .
+ The \fBboom\fP report provides several types of field that may be
+diff --git a/tests/boom/profiles/98c3edb94b7b3c8c95cb7d93f75693d2b25f764d-rhel6.profile b/tests/boom/profiles/98c3edb94b7b3c8c95cb7d93f75693d2b25f764d-rhel6.profile
+index ac87aa8..9e1a449 100644
+--- a/tests/boom/profiles/98c3edb94b7b3c8c95cb7d93f75693d2b25f764d-rhel6.profile
++++ b/tests/boom/profiles/98c3edb94b7b3c8c95cb7d93f75693d2b25f764d-rhel6.profile
+@@ -6,6 +6,6 @@ BOOM_OS_VERSION_ID="6"
+ BOOM_OS_UNAME_PATTERN="el6"
+ BOOM_OS_KERNEL_PATTERN="/vmlinuz-%{version}"
+ BOOM_OS_INITRAMFS_PATTERN="/initramfs-%{version}.img"
+-BOOM_OS_ROOT_OPTS_LVM2="rd.lvm.lv=%{lvm_root_lv}"
++BOOM_OS_ROOT_OPTS_LVM2="rd_LVM_LV=%{lvm_root_lv}"
+ BOOM_OS_ROOT_OPTS_BTRFS="rootflags=%{btrfs_subvolume}"
+ BOOM_OS_OPTIONS="root=%{root_device} ro %{root_opts} rhgb quiet"
+diff --git a/tests/command_tests.py b/tests/command_tests.py
+index 000d100..4f0b1bc 100644
+--- a/tests/command_tests.py
++++ b/tests/command_tests.py
+@@ -28,36 +28,39 @@ log = logging.getLogger()
+ log.level = logging.DEBUG
+ log.addHandler(logging.FileHandler("test.log"))
+ 
+-import boom
+-BOOT_ROOT_TEST = abspath("./tests")
+-boom.set_boot_path(BOOT_ROOT_TEST)
+-
+-from boom import Selection
++from boom import *
+ from boom.osprofile import *
+ from boom.bootloader import *
+ from boom.command import *
+ from boom.report import *
+ 
++BOOT_ROOT_TEST = abspath("./tests")
++config = BoomConfig()
++config.legacy_enable = False
++config.legacy_sync = False
++set_boom_config(config)
++set_boot_path(BOOT_ROOT_TEST)
++
+ 
+ class CommandTests(unittest.TestCase):
+     def test_list_entries(self):
+         path = boom_entries_path()
+         nr = len([p for p in listdir(path) if p.endswith(".conf")])
+-        bes = boom.command.list_entries()
++        bes = list_entries()
+         self.assertTrue(len(bes), nr)
+ 
+     def test_list_entries_match_machine_id(self):
+         machine_id = "611f38fd887d41dea7eb3403b2730a76"
+         path = boom_entries_path()
+         nr = len([p for p in listdir(path) if p.startswith(machine_id)])
+-        bes = boom.command.list_entries(Selection(machine_id=machine_id))
++        bes = list_entries(Selection(machine_id=machine_id))
+         self.assertTrue(len(bes), nr)
+ 
+     def test_list_entries_match_version(self):
+         version = "4.10.17-100.fc24.x86_64"
+         path = boom_entries_path()
+         nr = len([p for p in listdir(path) if version in p])
+-        bes = boom.command.list_entries(Selection(version=version))
++        bes = list_entries(Selection(version=version))
+         self.assertEqual(len(bes), nr)
+ 
+     def test_create_entry_notitle(self):
+@@ -127,7 +130,7 @@ class CommandTests(unittest.TestCase):
+     def test_print_entries_no_matching(self):
+         xoutput = r"BootID.*Version.*Name.*RootDevice"
+         output = StringIO()
+-        opts = boom.report.BoomReportOpts(report_file=output)
++        opts = BoomReportOpts(report_file=output)
+         print_entries(selection=Selection(boot_id="thereisnoboot"), opts=opts)
+         self.assertTrue(re.match(xoutput, output.getvalue()))
+ 
+@@ -139,7 +142,7 @@ class CommandTests(unittest.TestCase):
+                    r"debfd7f.*4.11.12-100.fc24.x86_64.*Fedora.*"
+                    r"/dev/vg00/lvol0-snapshot"]
+         output = StringIO()
+-        opts = boom.report.BoomReportOpts(report_file=output)
++        opts = BoomReportOpts(report_file=output)
+         print_entries(selection=Selection(boot_id="debfd7f"), opts=opts)
+         print(output.getvalue())
+         for pair in zip(xoutput, output.getvalue().splitlines()):
+@@ -149,6 +152,6 @@ class CommandTests(unittest.TestCase):
+ # exception in ArgParse() (too few arguments).
+ #    def test_boom_main_noargs(self):
+ #        args = [abspath('bin/boom'), '--help']
+-#        boom.command.main(args)
++#        main(args)
+ 
+ # vim: set et ts=4 sw=4 :
+diff --git a/tests/grub/grub.conf b/tests/grub/grub.conf
+new file mode 100644
+index 0000000..273e6a4
+--- /dev/null
++++ b/tests/grub/grub.conf
+@@ -0,0 +1,211 @@
++# grub.conf generated by anaconda
++#
++# Note that you do not have to rerun grub after making changes to this file
++# NOTICE:  You have a /boot partition.  This means that
++#          all kernel and initrd paths are relative to /boot/, eg.
++#          root (hd0,0)
++#          kernel /vmlinuz-version ro root=/dev/mapper/vg_mother-lv_root
++#          initrd /initrd-[generic-]version.img
++#boot=/dev/sdb
++default=0
++timeout=5
++splashimage=(hd0,0)/grub/splash.xpm.gz
++hiddenmenu
++title Red Hat Enterprise Linux Server (2.6.32-621.el6.x86_64)
++	root (hd0,0)
++	kernel /vmlinuz-2.6.32-621.el6.x86_64 ro root=/dev/vg_mother/lv_root rd_NO_LUKS  KEYBOARDTYPE=pc KEYTABLE=uk LANG=en_US.UTF-8 rd_NO_MD quiet SYSFONT=latarcyrheb-sun16 rhgb crashkernel=auto rd_LVM_LV=vg_mother/lv_root rd_LVM_LV=vg_mother/lv_swap0 rd_NO_DM
++	initrd /initramfs-2.6.32-621.el6.x86_64.img
++title Red Hat Enterprise Linux Server (2.6.32-573.3.1.el6.x86_64)
++	root (hd0,0)
++	kernel /vmlinuz-2.6.32-573.3.1.el6.x86_64 ro root=/dev/vg_mother/lv_root rd_NO_LUKS  KEYBOARDTYPE=pc KEYTABLE=uk LANG=en_US.UTF-8 rd_NO_MD quiet SYSFONT=latarcyrheb-sun16 rhgb crashkernel=auto rd_LVM_LV=vg_mother/lv_root rd_LVM_LV=vg_mother/lv_swap0 rd_NO_DM
++	initrd /initramfs-2.6.32-573.3.1.el6.x86_64.img
++title Red Hat Enterprise Linux Server (2.6.32-504.16.2.el6.x86_64)
++	root (hd0,0)
++	kernel /vmlinuz-2.6.32-504.16.2.el6.x86_64 ro root=/dev/vg_mother/lv_root rd_NO_LUKS  KEYBOARDTYPE=pc KEYTABLE=uk LANG=en_US.UTF-8 rd_NO_MD quiet SYSFONT=latarcyrheb-sun16 rhgb crashkernel=auto rd_LVM_LV=vg_mother/lv_root rd_LVM_LV=vg_mother/lv_swap0 rd_NO_DM
++	initrd /initramfs-2.6.32-504.16.2.el6.x86_64.img
++#--- BOOM_Grub1_BEGIN ---
++title ANEWTITLE
++        root (hd0,0)
++        kernel /vmlinuz-2.6.32-232.el6 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0 rhgb quiet
++        initrd /initramfs-2.6.32-232.el6.img
++title ATITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.10 root=/dev/vg00/lvol0-snap9 ro rd.lvm.lv=vg00/lvol0-snap9 rootflags=subvolid=23 rhgb quiet
++        initrd /initramfs-3.3.10.img
++title ANEWTITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.30 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0
++        initrd /initrd.img-3.3.30
++title ANOTHERTITLE2
++        root (hd0,0)
++        kernel /vmlinuz-3.10-23.el7 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0 rhgb quiet
++        initrd /initramfs-3.10-23.el7.img
++title ANEWTITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.40 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0
++        initrd /initrd.img-3.3.40
++title Fedora 26 (Workstation Edition) - Rescue Image
++        root (hd0,0)
++        kernel /611f38fd887d41dea7eb3403b2730a76/0-rescue/linux BOOT_IMAGE=/vmlinuz-4.11.12-100.fc24.x86_64 root=/dev/mapper/vg_hex-root ro rd.lvm.lv=vg_hex/root rhgb quiet rd.auto=1
++        initrd /611f38fd887d41dea7eb3403b2730a76/0-rescue/initrd
++title ANOTHERTITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.60-12.fc24.x86_64 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0 rhgb quiet
++        initrd /initramfs-3.3.60-12.fc24.x86_64.img
++title Some other snapshot
++        root (hd0,0)
++        kernel /vmlinuz-4.11.12-100.fc24.x86_64 root=/dev/vg00/lvol0-snapshot2 ro rd.lvm.lv=vg00/lvol0-snapshot2 rhgb quiet
++        initrd /initramfs-4.11.12-100.fc24.x86_64.img
++title Fedora 26 snapshot 2 (4.13.5-200.fc26.x86_64)
++        root (hd0,0)
++        kernel /vmlinuz-4.13.5-200.fc26.x86_64 BOOT_IMAGE=/vmlinuz-4.13.5-200.fc26.x86_64 root=/dev/vg_hex/root-snap-f26 ro rd.lvm.lv=vg_hex/root-snap-f26 rhgb quiet
++        initrd /initramfs-4.13.5-200.fc26.x86_64.img
++title qux
++        root (hd0,0)
++        kernel /vmlinuz-3.3.4 root=/dev/vg00/lvol0-snap2 ro rd.lvm.lv=vg00/lvol0-snap2 rhgb quiet
++        initrd /initramfs-3.3.4.img
++title Some snapshot
++        root (hd0,0)
++        kernel /vmlinuz-4.11.12-100.fc24.x86_64 root=/dev/vg00/lvol0-snapshot ro rd.lvm.lv=vg00/lvol0-snapshot rhgb quiet
++        initrd /initramfs-4.11.12-100.fc24.x86_64.img
++title ATITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.4 root=/dev/vg00/lvol0-snap2 ro rd.lvm.lv=vg00/lvol0-snap2 rhgb quiet
++        initrd /initramfs-3.3.4.img
++title title
++        root (hd0,0)
++        kernel /vmlinuz-1.1.1-1.fc24.x86_64 root=/dev/vg_root/root ro rd.lvm.lv=vg_root/root rhgb quiet
++        initrd /initramfs-1.1.1-1.fc24.x86_64.img
++title ANEWTITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.10.1-1.el7 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0 rhgb quiet
++        initrd /initramfs-3.10.1-1.el7.img
++title A NEWER TITLE
++        root (hd0,0)
++        kernel /vmlinuz-7.7.7 root=/dev/vg_qux/lv_qux ro rd.lvm.lv=vg_qux/lv_qux rhgb quiet
++        initrd /initramfs-7.7.7.img
++title Fedora (4.1.1-100.fc24.x86_64) 24 (Workstation Edition)
++        root (hd0,0)
++        kernel /vmlinuz-4.1.1-100.fc24 root=/dev/sda5 ro rootflags=subvolid=23 rhgb quiet
++        initrd /initramfs-4.1.1-100.fc24.img
++title ANEWTITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.50 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0
++        initrd /initrd.img-3.3.50
++title title
++        root (hd0,0)
++        kernel /vmlinuz-2.2.2-2.fc24.x86_64 root=/dev/vg_root/root ro rootflags=subvol=/snapshot/today rhgb quiet
++        initrd /initramfs-2.2.2-2.fc24.x86_64.img
++title Fedora 26 snapshot 3 (4.13.5-200.fc26.x86_64)
++        root (hd0,0)
++        kernel /vmlinuz-4.13.5-200.fc26.x86_64 BOOT_IMAGE=/vmlinuz-4.13.5-200.fc26.x86_64 root=/dev/vg_hex/root-snap-f26-2 ro rd.lvm.lv=vg_hex/root-snap-f26-2 rhgb quiet
++        initrd /initramfs-4.13.5-200.fc26.x86_64.img
++title Fedora (4.1.1-100.fc24.x86_64) 24 (Workstation Edition)
++        root (hd0,0)
++        kernel /vmlinuz-4.1.1-100.fc24 root=root=/dev/sda5 ro rootflags=subvolid=23 rhgb quiet
++        initrd /initramfs-4.1.1-100.fc24.img
++title Fedora 26 snapshot 77 (4.13.8-200.fc26.x86_64)
++        root (hd0,0)
++        kernel /611f38fd887d41dea7eb3403b2730a76/0-rescue/linux BOOT_IMAGE=/611f38fd887d41dea7eb3403b2730a76/0-rescue/linux root=/dev/vg_hex/root ro rd.lvm.lv=vg_hex/root rootflags=subvolid=25 rhgb quiet
++        initrd /611f38fd887d41dea7eb3403b2730a76/0-rescue/initrd
++title ANEWTITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.30 root=/dev/vg00/lvol0-snap ro rd.lvm.lv=vg00/lvol0-snap
++        initrd /initrd.img-3.3.30
++title RHEL7 snapshot
++        root (hd0,0)
++        kernel /vmlinuz-3.10-272.el7 root=/dev/vg00/lvol0-snap ro rd.lvm.lv=vg00/lvol0-snap rhgb quiet
++        initrd /initramfs-3.10-272.el7.img
++title ANEWTITLE
++        root (hd0,0)
++        kernel /kernel-2.6.32-232.el6 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0 rhgb quiet
++        initrd /initramfs-2.6.32-232.el6.img
++title ATITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.5 root=/dev/vg00/lvol0-snap ro rd.lvm.lv=vg00/lvol0-snap rhgb quiet
++        initrd /initramfs-3.3.5.img
++title qux2
++        root (hd0,0)
++        kernel /vmlinuz-4.13.13-200.fc26.x86_64 BOOT_IMAGE=/vmlinuz-4.13.13-200.fc26.x86_64 root=/dev/nosuch/dev ro rd.lvm.lv=nosuch/dev rhgb quiet
++        initrd /initramfs-4.13.13-200.fc26.x86_64.img
++title System Snapshot
++        root (hd0,0)
++        kernel /vmlinuz-4.13.5-200.fc26.x86_64 BOOT_IMAGE=/vmlinuz-4.13.5-200.fc26.x86_64 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0 rhgb quiet
++        initrd /initramfs-4.13.5-200.fc26.x86_64.img
++title ANEWERTITLE3
++        root (hd0,0)
++        kernel /vmlinuz-3.3.30 root=/dev/vg00/lvol0-snap2 ro rd.lvm.lv=vg00/lvol0-snap2
++        initrd /initrd.img-3.3.30
++title ATITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.3 root=/dev/vg00/lvol0 ro  rhgb quiet
++        initrd /initramfs-3.3.3.img
++title ANOTHERTITLE3
++        root (hd0,0)
++        kernel /vmlinuz-3.3.10 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0
++        initrd /initrd.img-3.3.10
++title ATITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.10 root=/dev/vg00/lvol0-snap2 ro rootflags=subvolid=23 rhgb quiet
++        initrd /initramfs-3.3.10.img
++title Red Hat Enterprise Linux 7.2 (Maipo) 3.10-23.el7
++        root (hd0,0)
++        kernel /vmlinuz-3.10-23.el7 root=/dev/sda5 ro  rhgb quiet
++        initrd /initramfs-3.10-23.el7.img
++title qux54
++        root (hd0,0)
++        kernel /vmlinuz-4.14.14-200.fc26.x86_64 BOOT_IMAGE=/vmlinuz-4.14.14-200.fc26.x86_64 root=/dev/sda3 ro  rhgb quiet
++        initrd /initramfs-4.14.14-200.fc26.x86_64.img
++title ANEWERTITLE2
++        root (hd0,0)
++        kernel /vmlinuz-3.3.30 root=/dev/vg00/lvol0-snap ro rd.lvm.lv=vg00/lvol0-snap
++        initrd /initrd.img-3.3.30
++title Fedora 26 snapshot 77 (4.13.8-200.fc26.x86_64)
++        root (hd0,0)
++        kernel /611f38fd887d41dea7eb3403b2730a76/0-rescue/linux BOOT_IMAGE=/611f38fd887d41dea7eb3403b2730a76/0-rescue/linux root=/dev/vg_hex/root ro rd.lvm.lv=vg_hex/root rootflags=subvolid=25 rhgb quiet
++        initrd /initramfs-4.13.5-200.fc26.x86_64.img
++title title
++        root (hd0,0)
++        kernel vmlinuz-2.2.2-2.fc24.x86_64 root=/dev/vg_root/root ro rootflags=subvol=/snapshot/today rhgb quiet
++        initrd initramfs-2.2.2-2.fc24.x86_64.img
++title qux54
++        root (hd0,0)
++        kernel /vmlinuz-4.14.14-200.fc26.x86_64 BOOT_IMAGE=/vmlinuz-4.14.14-200.fc26.x86_64 root=/dev/g_hex/root ro rd.lvm.lv=/dev/vg_hex/root rhgb quiet
++        initrd /initramfs-4.14.14-200.fc26.x86_64.img
++title title
++        root (hd0,0)
++        kernel vmlinuz-1.1.1-1.fc24.x86_64 root=/dev/vg_root/root ro rd.lvm.lv=vg_root/root rhgb quiet
++        initrd initramfs-1.1.1-1.fc24.x86_64.img
++title qux54
++        root (hd0,0)
++        kernel /vmlinuz-4.14.14-200.fc26.x86_64 BOOT_IMAGE=/vmlinuz-4.14.14-200.fc26.x86_64 root=/dev/vg_hex/root ro rd.lvm.lv=vg_hex/root rhgb quiet
++        initrd /initramfs-4.14.14-200.fc26.x86_64.img
++title Red Hat Enterprise Linux Server (3.10-1.el7.fc24.x86_64) 7.2 (Maipo)
++        root (hd0,0)
++        kernel /vmlinuz-3.10-1.el7.fc24.x86_64 root=/dev/vg_hex/root ro rd.lvm.lv=vg_hex/root rhgb quiet
++        initrd /initramfs-3.10-1.el7.fc24.x86_64.img
++title Fedora 26 snapshot 4 (4.13.5-200.fc26.x86_64)
++        root (hd0,0)
++        kernel /vmlinuz-4.13.5-200.fc26.x86_64 BOOT_IMAGE=/vmlinuz-4.13.5-200.fc26.x86_64 root=/dev/vg_hex/root ro rd.lvm.lv=vg_hex/root rootflags=subvolid=24 rhgb quiet
++        initrd /initramfs-4.13.5-200.fc26.x86_64.img
++title Fedora 26 (Workstation Edition) - Rescue Image
++        root (hd0,0)
++        kernel /611f38fd887d41dea7eb3403b2730a76/0-rescue/linux BOOT_IMAGE=/vmlinuz-4.11.12-100.fc24.x86_64 root=/dev/mapper/vg_hex-root ro rd.lvm.lv=vg_hex/root rhgb quiet rd.auto=1
++        initrd /611f38fd887d41dea7eb3403b2730a76/0-rescue/initrd
++title Fedora (4.1.1-100.fc24.x86_64) 24 (Workstation Edition)
++        root (hd0,0)
++        kernel vmlinuz-4.1.1-100.fc24 root=/dev/sda5 ro rootflags=subvolid=23 rhgb quiet
++        initrd initramfs-4.1.1-100.fc24.img
++title ATITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.10 root=/dev/vg00/lvol0-snap2 ro rd.lvm.lv=vg00/lvol0-snap2 rootflags=subvolid=23 rhgb quiet
++        initrd /initramfs-3.3.10.img
++title ANOTHERTITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.60 root=/dev/vg00/lvol0 ro rd.lvm.lv=vg00/lvol0
++        initrd /initrd.img-3.3.60
++title ATITLE
++        root (hd0,0)
++        kernel /vmlinuz-3.3.9 root=/dev/vg00/lvol0-snap ro rd.lvm.lv=vg00/lvol0-snap rhgb quiet
++        initrd /initramfs-3.3.9.img
++#--- BOOM_Grub1_END ---
