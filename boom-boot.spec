@@ -58,6 +58,12 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_mandir}/man5
 install -m 644 man/man8/boom.8 ${RPM_BUILD_ROOT}/%{_mandir}/man8
 install -m 644 man/man5/boom.5 ${RPM_BUILD_ROOT}/%{_mandir}/man5
 
+%if 0%{?sphinx_docs}
+install -d -m 755 ${RPM_BUILD_ROOT}%{_docdir}/python3-boom
+cp -R doc/_build/html ${RPM_BUILD_ROOT}%{_docdir}/python3-boom/
+chmod u=rwX,go=rX ${RPM_BUILD_ROOT}%{_docdir}/python3-boom/html
+%endif
+
 %check
 # Test suite currently does not operate in rpmbuild environment
 #%{__python3} setup.py test
@@ -77,6 +83,7 @@ include this support in both Red Hat Enterprise Linux 7 and Fedora).
 This package provides the python3 version of boom.
 
 %files -n python3-boom
+%{_bindir}/boom
 %license COPYING
 %doc README.md
 %doc %{_mandir}/man*/boom.*
