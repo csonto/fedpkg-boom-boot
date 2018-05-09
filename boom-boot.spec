@@ -30,13 +30,18 @@ include this support in both Red Hat Enterprise Linux 7 and Fedora).
 
 %prep
 %setup -q -n boom-%{version}
-%patch0 -p1 -b .p0
+# NOTE: Do not use backup extension - MANIFEST.in is picking them
+%patch0 -p1
 
 %build
-%py3_build
 %if 0%{?sphinx_docs}
 make -C doc html
+rm doc/_build/html/.buildinfo
+mv doc/_build/html doc/html
+rm -r doc/_build
 %endif
+
+%py3_build
 
 %install
 %py3_install
@@ -48,8 +53,9 @@ install -m 755 etc/grub.d/42_boom ${RPM_BUILD_ROOT}/etc/grub.d
 install -m 644 etc/default/boom ${RPM_BUILD_ROOT}/etc/default
 
 # Make configuration directories
-install -d -m 750 ${RPM_BUILD_ROOT}/boot/boom/profiles
-install -d -m 750 ${RPM_BUILD_ROOT}/boot/loader/entries
+# mode 0700 - in line with /boot/grub2 directory:
+install -d -m 700 ${RPM_BUILD_ROOT}/boot/boom/profiles
+install -d -m 700 ${RPM_BUILD_ROOT}/boot/loader/entries
 install -m 644 examples/profiles/*.profile ${RPM_BUILD_ROOT}/boot/boom/profiles
 install -m 644 examples/boom.conf ${RPM_BUILD_ROOT}/boot/boom
 
@@ -58,15 +64,12 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_mandir}/man5
 install -m 644 man/man8/boom.8 ${RPM_BUILD_ROOT}/%{_mandir}/man8
 install -m 644 man/man5/boom.5 ${RPM_BUILD_ROOT}/%{_mandir}/man5
 
-%if 0%{?sphinx_docs}
-install -d -m 755 ${RPM_BUILD_ROOT}%{_docdir}/python3-boom
-cp -R doc/_build/html ${RPM_BUILD_ROOT}%{_docdir}/python3-boom/
-chmod u=rwX,go=rX ${RPM_BUILD_ROOT}%{_docdir}/python3-boom/html
-%endif
+rm doc/Makefile
+rm doc/conf.py
 
-%check
 # Test suite currently does not operate in rpmbuild environment
-#%{__python3} setup.py test
+#%%check
+#%%{__python3} setup.py test
 
 %package -n python3-boom
 Summary: %{summary}
@@ -87,13 +90,14 @@ This package provides the python3 version of boom.
 %license COPYING
 %doc README.md
 %doc %{_mandir}/man*/boom.*
-%if 0%{?sphinx_docs}
-%doc doc/html/
-%endif
-%doc examples/*
+%doc doc
+%doc examples
+%doc tests
 %{python3_sitelib}/*
-/etc/grub.d/42_boom
-/etc/default/boom
+%{_sysconfdir}/grub.d/42_boom
+%config(noreplace) %{_sysconfdir}/default/boom
+%dir /boot/boom
+%dir /boot/loader/entries
 /boot/*
 
 %changelog
