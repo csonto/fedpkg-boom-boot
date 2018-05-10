@@ -75,6 +75,11 @@ rm doc/conf.py
 Summary: %{summary}
 %{?python_provide:%python_provide python3-boom}
 
+# There used to be a boom package in fedora, and there is boom packaged in
+# copr. How to tell which one is installed? We need python3-boom and no boom
+# only.
+Conflicts: boom <= 0.8
+
 %description -n python3-boom
 Boom is a boot manager for Linux systems using boot loaders that support
 the BootLoader Specification for boot entry configuration.
