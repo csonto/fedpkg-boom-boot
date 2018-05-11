@@ -74,6 +74,9 @@ rm doc/conf.py
 %package -n python3-boom
 Summary: %{summary}
 %{?python_provide:%python_provide python3-boom}
+Requires: python3
+Suggests: grub2
+Suggests: lvm2
 
 # There used to be a boom package in fedora, and there is boom packaged in
 # copr. How to tell which one is installed? We need python3-boom and no boom
@@ -102,8 +105,10 @@ This package provides the python3 version of boom.
 %{_sysconfdir}/grub.d/42_boom
 %config(noreplace) %{_sysconfdir}/default/boom
 %dir /boot/boom
+%config(noreplace) /boot/boom/boom.conf
+%dir /boot/boom/profiles
+%config(noreplace) /boot/boom/profiles/*
 %dir /boot/loader/entries
-/boot/*
 
 %changelog
 * Thu Apr 26 2018 Marian Csontos <mcsontos@redhat.com> 0.8.5-6
