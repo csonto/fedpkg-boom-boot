@@ -3,7 +3,7 @@
 
 Name:		boom-boot
 Version:	0.8.5
-Release:	6%{?dist}
+Release:	6.1%{?dist}
 Summary:	%{summary}
 
 License:	GPLv2
@@ -111,6 +111,9 @@ This package provides the python3 version of boom.
 %dir /boot/loader/entries
 
 %changelog
+* Fri May 11 2018 Marian Csontos <mcsontos@redhat.com> 0.8.5-6.1
+- Files in /boot are treated as configuration files.
+
 * Thu Apr 26 2018 Marian Csontos <mcsontos@redhat.com> 0.8.5-6
 - Package upstream version 0.8-5.6
 
