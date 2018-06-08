@@ -3,7 +3,7 @@
 
 Name:		boom-boot
 Version:	0.8.5
-Release:	6.1%{?dist}
+Release:	6.2%{?dist}
 Summary:	%{summary}
 
 License:	GPLv2
@@ -56,7 +56,6 @@ install -m 644 etc/default/boom ${RPM_BUILD_ROOT}/etc/default
 # mode 0700 - in line with /boot/grub2 directory:
 install -d -m 700 ${RPM_BUILD_ROOT}/boot/boom/profiles
 install -d -m 700 ${RPM_BUILD_ROOT}/boot/loader/entries
-install -m 644 examples/profiles/*.profile ${RPM_BUILD_ROOT}/boot/boom/profiles
 install -m 644 examples/boom.conf ${RPM_BUILD_ROOT}/boot/boom
 
 mkdir -p ${RPM_BUILD_ROOT}/%{_mandir}/man8
@@ -107,10 +106,12 @@ This package provides the python3 version of boom.
 %dir /boot/boom
 %config(noreplace) /boot/boom/boom.conf
 %dir /boot/boom/profiles
-%config(noreplace) /boot/boom/profiles/*
 %dir /boot/loader/entries
 
 %changelog
+* Fri Jun 08 2018 Marian Csontos <mcsontos@redhat.com> 0.8.5-6.2
+- Remove example files from /boot/boom/profiles.
+
 * Fri May 11 2018 Marian Csontos <mcsontos@redhat.com> 0.8.5-6.1
 - Files in /boot are treated as configuration files.
 
