@@ -2,15 +2,13 @@
 %global sphinx_docs 1
 
 Name:		boom-boot
-Version:	0.8.5
-Release:	6.2%{?dist}
+Version:	0.9
+Release:	1%{?dist}
 Summary:	%{summary}
 
 License:	GPLv2
 URL:		https://github.com/bmr-cymru/boom
 Source0:	https://github.com/bmr-cymru/boom/archive/%{version}/boom-%{version}.tar.gz
-# Cummulative patch up to commit d9aef9707c64:
-Patch0:		boom-0.8-5.6.patch
 
 BuildArch:	noarch
 
@@ -109,6 +107,10 @@ This package provides the python3 version of boom.
 %dir /boot/loader/entries
 
 %changelog
+* Wed Jun 27 2018 Marian Csontos <mcsontos@redhat.com> 0.9-1
+- Update to new upstream 0.9.
+- Fix boot_id caching.
+
 * Fri Jun 08 2018 Marian Csontos <mcsontos@redhat.com> 0.8.5-6.2
 - Remove example files from /boot/boom/profiles.
 
