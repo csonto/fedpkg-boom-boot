@@ -29,7 +29,6 @@ include this support in both Red Hat Enterprise Linux 7 and Fedora).
 %prep
 %setup -q -n boom-%{version}
 # NOTE: Do not use backup extension - MANIFEST.in is picking them
-%patch0 -p1
 
 %build
 %if 0%{?sphinx_docs}
