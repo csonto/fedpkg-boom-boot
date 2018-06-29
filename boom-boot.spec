@@ -3,7 +3,7 @@
 
 Name:		boom-boot
 Version:	0.9
-Release:	1%{?dist}
+Release:	2%{?dist}
 Summary:	%{summary}
 
 License:	GPLv2
@@ -71,13 +71,16 @@ rm doc/conf.py
 Summary: %{summary}
 %{?python_provide:%python_provide python3-boom}
 Requires: python3
-Suggests: grub2
-Suggests: lvm2
+Recommends: (lvm2 or brtfs-progs)
 
 # There used to be a boom package in fedora, and there is boom packaged in
 # copr. How to tell which one is installed? We need python3-boom and no boom
 # only.
-Conflicts: boom <= 0.8
+Conflicts: boom
+
+%package grub2
+Summary: %{summary}
+Supplements: (grub2 and python3-boom)
 
 %description -n python3-boom
 Boom is a boot manager for Linux systems using boot loaders that support
@@ -89,6 +92,16 @@ include this support in both Red Hat Enterprise Linux 7 and Fedora).
 
 This package provides the python3 version of boom.
 
+%description grub2
+Boom is a boot manager for Linux systems using boot loaders that support
+the BootLoader Specification for boot entry configuration.
+
+Boom requires a BLS compatible boot loader to function: either the
+systemd-boot project, or Grub2 with the bls patch (Red Hat Grub2 builds
+include this support in both Red Hat Enterprise Linux 7 and Fedora).
+
+This package provides the integration scripts for grub2 bootloader.
+
 %files -n python3-boom
 %{_bindir}/boom
 %license COPYING
@@ -98,14 +111,22 @@ This package provides the python3 version of boom.
 %doc examples
 %doc tests
 %{python3_sitelib}/*
-%{_sysconfdir}/grub.d/42_boom
-%config(noreplace) %{_sysconfdir}/default/boom
 %dir /boot/boom
 %config(noreplace) /boot/boom/boom.conf
 %dir /boot/boom/profiles
 %dir /boot/loader/entries
 
+%files grub2
+%license COPYING
+%doc README.md
+%{_sysconfdir}/grub.d/42_boom
+%config(noreplace) %{_sysconfdir}/default/boom
+
+
 %changelog
+* Wed Jun 27 2018 Marian Csontos <mcsontos@redhat.com> 0.9-2
+- Spin off grub2 into subpackage
+
 * Wed Jun 27 2018 Marian Csontos <mcsontos@redhat.com> 0.9-1
 - Update to new upstream 0.9.
 - Fix boot_id caching.
