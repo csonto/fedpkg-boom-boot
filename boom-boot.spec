@@ -23,7 +23,7 @@ Boom is a boot manager for Linux systems using boot loaders that support
 the BootLoader Specification for boot entry configuration.
 
 Boom requires a BLS compatible boot loader to function: either the
-systemd-boot project, or Grub2 with the bls patch (Red Hat Grub2 builds
+systemd-boot project, or Grub2 with the BLS patch (Red Hat Grub2 builds
 include this support in both Red Hat Enterprise Linux 7 and Fedora).
 
 %prep
@@ -87,7 +87,7 @@ Boom is a boot manager for Linux systems using boot loaders that support
 the BootLoader Specification for boot entry configuration.
 
 Boom requires a BLS compatible boot loader to function: either the
-systemd-boot project, or Grub2 with the bls patch (Red Hat Grub2 builds
+systemd-boot project, or Grub2 with the BLS patch (Red Hat Grub2 builds
 include this support in both Red Hat Enterprise Linux 7 and Fedora).
 
 This package provides the python3 version of boom.
@@ -97,7 +97,7 @@ Boom is a boot manager for Linux systems using boot loaders that support
 the BootLoader Specification for boot entry configuration.
 
 Boom requires a BLS compatible boot loader to function: either the
-systemd-boot project, or Grub2 with the bls patch (Red Hat Grub2 builds
+systemd-boot project, or Grub2 with the BLS patch (Red Hat Grub2 builds
 include this support in both Red Hat Enterprise Linux 7 and Fedora).
 
 This package provides the integration scripts for grub2 bootloader.
