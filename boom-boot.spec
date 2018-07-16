@@ -3,7 +3,7 @@
 
 Name:		boom-boot
 Version:	0.9
-Release:	2%{?dist}
+Release:	3%{?dist}
 Summary:	%{summary}
 
 License:	GPLv2
@@ -18,6 +18,28 @@ BuildRequires:	python3-devel
 BuildRequires:	python3-sphinx
 %endif
 
+Requires: python3-boom
+Requires: %{name}-conf
+
+%package -n python3-boom
+Summary: %{summary}
+%{?python_provide:%python_provide python3-boom}
+Requires: python3
+Recommends: (lvm2 or brtfs-progs)
+Recommends: %{name}-conf
+
+# There used to be a boom package in fedora, and there is boom packaged in
+# copr. How to tell which one is installed? We need python3-boom and no boom
+# only.
+Conflicts: boom
+
+%package conf
+Summary: %{summary}
+
+%package grub2
+Summary: %{summary}
+Supplements: (grub2 and python3-boom)
+
 %description
 Boom is a boot manager for Linux systems using boot loaders that support
 the BootLoader Specification for boot entry configuration.
@@ -25,6 +47,36 @@ the BootLoader Specification for boot entry configuration.
 Boom requires a BLS compatible boot loader to function: either the
 systemd-boot project, or Grub2 with the BLS patch (Red Hat Grub2 builds
 include this support in both Red Hat Enterprise Linux 7 and Fedora).
+
+%description -n python3-boom
+Boom is a boot manager for Linux systems using boot loaders that support
+the BootLoader Specification for boot entry configuration.
+
+Boom requires a BLS compatible boot loader to function: either the
+systemd-boot project, or Grub2 with the BLS patch (Red Hat Grub2 builds
+include this support in both Red Hat Enterprise Linux 7 and Fedora).
+
+This package provides python3 boom module.
+
+%description conf
+Boom is a boot manager for Linux systems using boot loaders that support
+the BootLoader Specification for boot entry configuration.
+
+Boom requires a BLS compatible boot loader to function: either the
+systemd-boot project, or Grub2 with the BLS patch (Red Hat Grub2 builds
+include this support in both Red Hat Enterprise Linux 7 and Fedora).
+
+This package provides configuration files for boom.
+
+%description grub2
+Boom is a boot manager for Linux systems using boot loaders that support
+the BootLoader Specification for boot entry configuration.
+
+Boom requires a BLS compatible boot loader to function: either the
+systemd-boot project, or Grub2 with the BLS patch (Red Hat Grub2 builds
+include this support in both Red Hat Enterprise Linux 7 and Fedora).
+
+This package provides integration scripts for grub2 bootloader.
 
 %prep
 %setup -q -n boom-%{version}
@@ -67,50 +119,23 @@ rm doc/conf.py
 #%%check
 #%%{__python3} setup.py test
 
-%package -n python3-boom
-Summary: %{summary}
-%{?python_provide:%python_provide python3-boom}
-Requires: python3
-Recommends: (lvm2 or brtfs-progs)
-
-# There used to be a boom package in fedora, and there is boom packaged in
-# copr. How to tell which one is installed? We need python3-boom and no boom
-# only.
-Conflicts: boom
-
-%package grub2
-Summary: %{summary}
-Supplements: (grub2 and python3-boom)
-
-%description -n python3-boom
-Boom is a boot manager for Linux systems using boot loaders that support
-the BootLoader Specification for boot entry configuration.
-
-Boom requires a BLS compatible boot loader to function: either the
-systemd-boot project, or Grub2 with the BLS patch (Red Hat Grub2 builds
-include this support in both Red Hat Enterprise Linux 7 and Fedora).
-
-This package provides the python3 version of boom.
-
-%description grub2
-Boom is a boot manager for Linux systems using boot loaders that support
-the BootLoader Specification for boot entry configuration.
-
-Boom requires a BLS compatible boot loader to function: either the
-systemd-boot project, or Grub2 with the BLS patch (Red Hat Grub2 builds
-include this support in both Red Hat Enterprise Linux 7 and Fedora).
-
-This package provides the integration scripts for grub2 bootloader.
-
-%files -n python3-boom
-%{_bindir}/boom
+%files
 %license COPYING
 %doc README.md
+%{_bindir}/boom
 %doc %{_mandir}/man*/boom.*
+
+%files -n python3-boom
+%license COPYING
+%doc README.md
+%{python3_sitelib}/*
 %doc doc
 %doc examples
 %doc tests
-%{python3_sitelib}/*
+
+%files conf
+%license COPYING
+%doc README.md
 %dir /boot/boom
 %config(noreplace) /boot/boom/boom.conf
 %dir /boot/boom/profiles
@@ -124,6 +149,9 @@ This package provides the integration scripts for grub2 bootloader.
 
 
 %changelog
+* Mon Jul 16 2018 Marian Csontos <mcsontos@redhat.com> 0.9-3
+- Split executable, python module and configuration.
+
 * Wed Jun 27 2018 Marian Csontos <mcsontos@redhat.com> 0.9-2
 - Spin off grub2 into subpackage
 
