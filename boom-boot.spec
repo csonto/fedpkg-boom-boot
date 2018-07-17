@@ -3,7 +3,7 @@
 
 Name:		boom-boot
 Version:	0.9
-Release:	3%{?dist}
+Release:	4%{?dist}
 Summary:	%{summary}
 
 License:	GPLv2
@@ -38,7 +38,7 @@ Summary: %{summary}
 
 %package grub2
 Summary: %{summary}
-Supplements: (grub2 and python3-boom)
+Supplements: (grub2 and boom-boot)
 
 %description
 Boom is a boot manager for Linux systems using boot loaders that support
@@ -149,6 +149,9 @@ rm doc/conf.py
 
 
 %changelog
+* Tue Jul 17 2018 Marian Csontos <mcsontos@redhat.com> 0.9-4
+- Change dependencies.
+
 * Mon Jul 16 2018 Marian Csontos <mcsontos@redhat.com> 0.9-3
 - Split executable, python module and configuration.
 
